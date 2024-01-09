@@ -1,0 +1,142 @@
+---------------------------
+-- Swift-Cut Automation
+-- PR4/PR5/XP M03 Macro
+-- Metric/Imperial
+-- Last updated 11/11/2021
+-- Version 1.5
+---------------------------
+function m3()
+	local inst = mc.mcGetInstance()
+	local hReg, rc
+	--local hArcOk = mc.mcSignalGetHandle(inst, mc.ISIG_THCON)
+	local hDryRun = mc.mcSignalGetHandle(inst, mc.OSIG_OUTPUT51)
+	local dryRun = mc.mcSignalGetState(hDryRun)
+	
+	hReg = mc.mcRegGetHandle(inst, "iRegs0/checkArcOk")
+	local checkArcOk = mc.mcRegGetValue(hReg) ~= 0
+	--local i = 500 --	~=2 seconds
+	
+	hReg = mc.mcRegGetHandle(inst, "iRegs0/PM_LastCurrent")
+	local pmLastCur = mc.mcRegGetValue(hReg)
+	hReg = mc.mcRegGetHandle(inst, "iRegs0/PM_LastCutMode")
+	local pmLastCutMode = mc.mcRegGetValue(hReg)
+	hReg = mc.mcRegGetHandle(inst, "iRegs0/PM_LastPressure")
+	local pmLastPres = mc.mcRegGetValue(hReg)
+
+
+	if dryRun ~= 1 then
+		hReg = mc.mcRegGetHandle(inst, "iRegs0/PM_Serial")
+		local serialEna = mc.mcRegGetValue(hReg) ~= 0	
+		if serialEna then
+			--Set Powermax values
+			local pmCur = mc.mcCntlGetPoundVar(inst, 150)
+			if pmCur ~= pmLastCur then
+				hReg = mc.mcRegGetHandle(inst, "iRegs0/PM_MinCurrent")
+				local pmMinCur = mc.mcRegGetValue(hReg)
+				hReg = mc.mcRegGetHandle(inst, "iRegs0/PM_MaxCurrent")
+				local pmMaxCur = mc.mcRegGetValue(hReg)
+				if hypm.checkMinMax(pmCur, pmMinCur, pmMaxCur) or pmCur == 0 then
+	--				mc.mcCntlSetLastError(inst, "M03: Set Current: "..tostring(pmCur))
+					rc = hypm.setCurrent(pmCur)
+					if (rc ~= mc.MERROR_NOERROR) then
+						mc.mcCntlSetLastError(inst, langMacros.M03.m03PMcurrent) --"Failed to set Powermax Current"
+						mc.mcCntlEStop(inst)
+						return
+					end
+				else
+					mc.mcCntlSetLastError(inst, langMacros.M03.m03InvalidCur) --"Invalid Current Value (#150)"
+					mc.mcCntlEStop(inst)
+					return
+				end
+			end
+			
+			local pmCM = mc.mcCntlGetPoundVar(inst, 180)
+			local hSig = mc.mcSignalGetHandle(inst, mc.OSIG_OUTPUT58)
+			local CAMode = mc.mcSignalGetState(hSig)
+			if CAMode == 1 then
+				pmCM = 2
+			end
+			if pmCM ~= pmLastCutMode then
+				if hypm.checkMinMax(pmCM, 0,3) then
+	--				mc.mcCntlSetLastError(inst, "M03: Set Cut Mode: "..tostring(pmCM))
+					rc = hypm.setCutMode(pmCM)
+					if (rc ~= mc.MERROR_NOERROR) then
+						mc.mcCntlSetLastError(inst, langMacros.M03.m03PMcutmode) --"Failed to set Powermax Cut Mode"
+						mc.mcCntlEStop(inst)
+						return
+					end
+				else
+					mc.mcCntlSetLastError(inst, langMacros.M03.m03InvalidCM) --"Invalid Cut Mode Value (#180)"
+					mc.mcCntlEStop(inst)
+					return
+				end
+			end
+			
+			local pmPres = mc.mcCntlGetPoundVar(inst, 170)
+			if pmPres ~= pmLastPres then
+				hReg = mc.mcRegGetHandle(inst, "iRegs0/PM_MinPressure")
+				local pmMinPres = mc.mcRegGetValue(hReg)
+				hReg = mc.mcRegGetHandle(inst, "iRegs0/PM_MaxPressure")
+				local pmMaxPres = mc.mcRegGetValue(hReg)
+				if hypm.checkMinMax(pmPres, pmMinPres, pmMaxPres) or pmPres == 0 then
+	--				mc.mcCntlSetLastError(inst, "M03: Set Pressure: "..tostring(pmPres))
+					rc = hypm.setPressure(pmPres)
+					if (rc ~= mc.MERROR_NOERROR) then
+						mc.mcCntlSetLastError(inst, langMacros.M03.m03PMpressure) --"Failed to set Powermax Pressure"
+						mc.mcCntlEStop(inst)
+						return
+					end
+				else
+					mc.mcCntlSetLastError(inst, langMacros.M03.m03InvalidPres) --"Invalid Pressure Value (#170)"
+					mc.mcCntlEStop(inst)
+					return
+				end
+			end
+		end
+
+		--	Turn on torch
+		mc.mcSpindleSetDirection(inst, 1)
+		local hSig = mc.mcSignalGetHandle(inst, mc.OSIG_SPINDLEON)
+		rc = mc.mcSignalSetState(hSig, mc.MC_ON)
+		if (rc ~= mc.MERROR_NOERROR) then
+			mc.mcCntlSetLastError(inst, langMacros.M03.m03TorchErr) --"Error turning on torch"
+			mc.mcCntlEStop(inst)
+			return
+		end
+		--	 Wait for arc ok signal
+--		if checkArcOk then
+--			while i > 0 do
+--				arcOk = mc.mcSignalGetState(hArcOk)
+--				if arcOk == 1 then
+--					return
+--				end
+--				i=i-1
+--				wx.wxMilliSleep(5)
+--			end
+--		else
+--			wx.wxMilliSleep(850)
+--		end
+
+		if checkArcOk then
+			local rc = mc.mcSignalWait(inst, mc.ISIG_THCON, mc.WAIT_MODE_HIGH, 5)
+			if (rc == mc.MERROR_TIMED_OUT) then
+				mc.mcCntlSetLastError(inst, langMacros.M03.m03ArcTimeout) --"Arc Ok signal not detected"
+				mc.mcCntlEStop(inst)
+				return
+			end
+		else
+			--If we are not waiting for arc ok, add a delay in e.g. for wire mesh
+			wx.wxMilliSleep(850)
+		end
+			
+--		if i == 0 then
+--			mc.mcCntlSetLastError(inst, langMacros.M03.m03ArcTimeout) --"Arc Ok signal not detected"
+--			mc.mcCntlEStop(inst)
+--			return
+--		end
+	end	
+end	
+
+if (mc.mcInEditor() == 1) then
+    m3()
+end
